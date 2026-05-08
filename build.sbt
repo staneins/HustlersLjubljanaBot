@@ -7,6 +7,9 @@ lazy val root = (project in file("."))
     libraryDependencies ++= Seq(
       // MongoDB Java Driver (синхронный)
       "org.mongodb" % "mongodb-driver-sync" % "5.1.0",
+      "io.github.kirill5k" %% "mongo4cats-core" % "0.7.2",
+      "io.github.kirill5k"    %% "mongo4cats-circe"  % "0.7.2",
+      "io.circe"              %% "circe-generic"     % "0.14.6",
 
       // Core
       "org.typelevel" %% "cats-effect" % "3.5.4",

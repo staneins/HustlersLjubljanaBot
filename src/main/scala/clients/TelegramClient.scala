@@ -2,7 +2,7 @@ package clients
 
 import cats.effect.IO
 import config.Config
-import model.Message
+import dto.Message
 import repository.MessageRepository
 
 /**

@@ -2,7 +2,7 @@ package service
 
 import cats.effect.IO
 import config.Config
-import model.{Message, Summary}
+import dto.{Message, Summary}
 import repository.MessageRepository
 
 /**
