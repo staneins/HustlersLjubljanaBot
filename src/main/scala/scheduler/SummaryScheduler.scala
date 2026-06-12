@@ -80,8 +80,8 @@ class SummaryScheduler(
           summary <- summaryService.generateSummary()
           _ <- if (summary.totalMessages > 0) {
             for {
-              // Step 3: Send summary to Telegram chat
-              _ <- telegramClient.sendMessageFormatted(summary.text)
+              // Step 3: Send summary to Telegram chat (без форматирования, чтобы избежать проблем с экранированием)
+              _ <- telegramClient.sendMessage(summary.text)
               _ <- IO.println(s"✅ Summary sent: ${summary.totalMessages} messages")
 
               // Step 4: Clean MongoDB — all messages are already processed

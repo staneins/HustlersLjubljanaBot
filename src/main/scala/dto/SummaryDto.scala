@@ -4,9 +4,6 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-/**
- * Модель сгенерированного саммари.
- */
 case class Summary(
   periodStart: Long,
   periodEnd: Long,
@@ -22,9 +19,6 @@ object Summary {
   private val formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
     .withZone(ZoneId.systemDefault())
 
-  /**
-   * Создаёт Summary из списка сообщений.
-   */
   def fromMessages(messages: List[model.Message], start: Long, end: Long): Summary = {
     val validMessages = messages.filter(_.text.trim.nonEmpty)
 
@@ -48,9 +42,6 @@ object Summary {
     )
   }
 
-  /**
-   * Empty summary when there are no messages for the period.
-   */
   def emptySummary(start: Long, end: Long): Summary = {
     val startStr = formatter.format(Instant.ofEpochSecond(start))
     val endStr = formatter.format(Instant.ofEpochSecond(end))
@@ -62,7 +53,7 @@ object Summary {
       uniqueAuthors = 0,
       messagesByAuthor = Map.empty,
       topAuthors = List.empty,
-      text = s"📊 *Chat Summary*\n\nPeriod: $startStr — $endStr\n\nNo messages during this period\\."
+      text = s"📊 Chat Summary\n\nPeriod: $startStr — $endStr\n\nNo messages during this period."
     )
   }
 
@@ -73,7 +64,7 @@ object Summary {
     byAuthor: Map[String, Int],
     top3: List[(String, Int)]
   ): String = {
-    val header = s"📊 *Chat Summary*\n\nPeriod: $startStr — $endStr\nTotal messages: $total\nParticipants: ${byAuthor.size}"
+    val header = s"📊 Chat Summary\n\nPeriod: $startStr — $endStr\nTotal messages: $total\nParticipants: ${byAuthor.size}"
 
     val topSection = if (top3.nonEmpty) {
       val lines = top3.zipWithIndex.map { case ((author, count), idx) =>
@@ -83,28 +74,25 @@ object Summary {
           case 2 => "🥉"
           case _ => "•"
         }
-        s"$medal ${escapeMarkdown(author)}: $count"
+        s"$medal $author: $count"
       }
-      "\n\n*Top Participants:*\n" + lines.mkString("\n")
+      s"\n\nTop Participants:\n${lines.mkString("\n")}"
     } else ""
 
     val detailsSection = if (byAuthor.nonEmpty) {
       val lines = byAuthor.toList.sortBy(-_._2).map { case (author, count) =>
-        s"• ${escapeMarkdown(author)}: $count"
+        s"• $author: $count"
       }
-      "\n\n*All Participants:*\n" + lines.mkString("\n")
+      s"\n\nAll Participants:\n${lines.mkString("\n")}"
     } else ""
 
     header + topSection + detailsSection
   }
 
-  /**
-   * Экранирование спецсимволов MarkdownV2.
-   */
   def escapeMarkdown(text: String): String = {
-    val charsToEscape = Set('_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!')
+    val charsToEscape = Set('_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!', '\\')
     text.flatMap { c =>
-      if (charsToEscape.contains(c)) s"\\$c" else c.toString
+      if (charsToEscape.contains(c)) "\\" + c else c.toString
     }
   }
 }
