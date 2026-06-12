@@ -53,8 +53,16 @@ class GroqClient(config: Config) {
         |Используй Markdown для форматирования. Будь лаконичен, но информативен.""".stripMargin
 
     // User prompt — сами сообщения для анализа
+    val lookbackMinutes = config.summary.lookbackMinutes
+    val timeDescription = if (lookbackMinutes >= 1440) {
+      s"${lookbackMinutes / 1440} дн."
+    } else if (lookbackMinutes >= 60) {
+      s"${lookbackMinutes / 60} ч."
+    } else {
+      s"$lookbackMinutes мин."
+    }
     val userPrompt =
-      s"""Вот сообщения из чата за последние 24 часа. Сделай саммари обсуждений:\n\n$messagesText"""
+      s"""Сделай саммари по сообщениям ниже, напиши так: "За прошедшее $timeDescription пользователь N говорил о том-то", список сообщений для саммари ниже:\n\n$messagesText"""
 
     // Формируем тело запроса в формате OpenAI Chat Completions API
     val requestBody = Map(
