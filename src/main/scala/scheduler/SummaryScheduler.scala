@@ -1,97 +1,119 @@
 package scheduler
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
+import cats.syntax.all._
 import clients.TelegramClient
 import config.Config
+import repository.MessageRepository
 import service.SummaryService
 
+import scala.concurrent.duration._
+
 /**
- * TODO: Реализовать планировщик периодической генерации саммари.
+ * Планировщик периодической генерации саммари.
  *
- * Подсказка для Java-разработчика:
- * Это как @Scheduled в Spring Boot:
- *   @Scheduled(fixedRate = 60, timeUnit = TimeUnit.MINUTES)
- *   public void generateSummary() { ... }
+ * Работает как бесконечный цикл: ждёт N минут → генерирует саммари →
+ * отправляет в Telegram → чистит БД → повторяет.
  *
- * Но вместо аннотаций пишем цикл вручную.
- * В функциональном стиле используем рекурсию вместо while(true).
+ * Ошибки в одном цикле логируются, но не останавливают планировщик.
  */
 class SummaryScheduler(
-  summaryService: SummaryService,
-  telegramClient: TelegramClient,
-  config: Config
+  summaryService: SummaryService,          // Сервис генерации саммари (Groq + fallback)
+  telegramClient: TelegramClient,          // Клиент Telegram для отправки сообщений
+  repo: MessageRepository[IO],             // Репозиторий MongoDB для очистки после саммари
+  config: Config                           // Конфигурация (интервал, lookback)
 ) {
 
+  // Флаг "работает ли планировщик". Ref — это потокобезопасная ячейка в IO.
+  // Можно менять из разных файберов без гонок.
+  private val running: Ref[IO, Boolean] = Ref.unsafe[IO, Boolean](true)
+
   /**
-   * TODO: Запустить бесконечный цикл планировщика.
+   * Запустить бесконечный цикл планировщика.
    *
-   * Алгоритм:
-   * 1. Вызвать runOnce()
-   * 2. Подождать config.summaryIntervalMinutes минут
-   * 3. Повторить (если running == true)
-   *
-   * Ожидание в Scala:
-   *   IO.sleep(60.minutes)
-   *
-   * Нужен импорт: scala.concurrent.duration._
-   *
-   * Бесконечный цикл через рекурсию:
-   *   def loop(): IO[Unit] = for {
-   *     _ <- runOnce()
-   *     _ <- IO.sleep(interval)
-   *     _ <- if (running) loop() else IO.unit
-   *   } yield ()
-   *
-   * handleErrorWith — обработка ошибок без остановки:
-   *   someIO.handleErrorWith { e =>
-   *     logger.error("Ошибка", e)
-   *     IO.unit // продолжаем
-   *   }
+   * Каждая итерация:
+   * 1. Проверить, не остановлен ли планировщик
+   * 2. Выполнить runOnce() с обработкой ошибок
+   * 3. Поспать interval минут
+   * 4. Повторить
    */
   def start(): IO[Unit] = {
-    IO.println("TODO: start() — запуск планировщика") >>
-    IO.println(s"Интервал: ${config.summaryIntervalMinutes} мин")
+    val interval = config.summaryIntervalMinutes.minutes
+
+    def loop(): IO[Unit] = for {
+      isRunning <- running.get
+      _ <- if (isRunning) {
+        runOnce().handleErrorWith { err =>
+          // Ошибка в одном цикле логируется, но НЕ останавливает планировщик
+          IO.println(s"❌ Ошибка в планировщике: ${err.getMessage}")
+        } >>
+          IO.sleep(interval) >> // Ждём до следующего цикла
+          loop()
+      } else {
+        IO.unit
+      }
+    } yield ()
+
+    IO.println(s"⏰ Планировщик запущен. Интервал: ${config.summaryIntervalMinutes} мин") >>
+      loop()
   }
 
   /**
-   * TODO: Один цикл: генерация + отправка саммари.
+   * Один цикл: генерация саммари + отправка в чат + очистка БД.
    *
-   * Алгоритм:
-   * 1. Получить текущее время
-   * 2. Вычислить periodStart = now - lookbackMinutes * 60
-   * 3. Проверить наличие сообщений: repo.hasMessagesInPeriod(start, end)
-   * 4. Если есть — сгенерировать summaryService.generateSummaryForPeriod(start, end)
-   * 5. Если summary не пустое — отправить telegramClient.sendMessageFormatted(summary.text)
-   * 6. Логировать результат
+   * Поток:
+   * 1. Проверить, есть ли сообщения за период
+   * 2. Сгенерировать саммари через SummaryService (Groq API)
+   * 3. Отправить в Telegram
+   * 4. Удалить ВСЕ сообщения из MongoDB (БД чиста до следующего цикла)
    */
   def runOnce(): IO[Unit] = {
-    // TODO: Реализовать один цикл
-    IO.println("TODO: runOnce()")
+    val now = System.currentTimeMillis() / 1000                     // Текущее время в секундах
+    val periodStart = now - config.lookbackMinutes * 60             // Начало периода (сейчас - lookback)
+
+    for {
+      // Шаг 1: Проверить, есть ли сообщения за период
+      hasMessages <- summaryService.hasMessagesInPeriod(periodStart, now)
+      _ <- if (hasMessages) {
+        for {
+          // Шаг 2: Сгенерировать саммари (AI через Groq или fallback на статистику)
+          summary <- summaryService.generateSummary()
+          _ <- if (summary.totalMessages > 0) {
+            for {
+              // Шаг 3: Отправить саммари в Telegram-чат
+              _ <- telegramClient.sendMessageFormatted(summary.text)
+              _ <- IO.println(s"✅ Саммари отправлено: ${summary.totalMessages} сообщений")
+
+              // Шаг 4: Очистить MongoDB — все сообщения уже обработаны
+              deleted <- repo.deleteAll()
+              _ <- IO.println(s"🗑️ MongoDB очищена: удалено $deleted сообщений")
+            } yield ()
+          } else {
+            IO.unit
+          }
+        } yield ()
+      } else {
+        IO.println("ℹ️ За период нет сообщений, саммари не отправляется")
+      }
+    } yield ()
   }
 
   /**
-   * TODO: Остановить планировщик.
-   *
-   * Можно использовать @volatile Boolean (как в Java).
-   * Или более функциональный подход — Ref[IO, Boolean].
-   *
-   * @volatile var running: Boolean = true
-   *
-   * В Java: private volatile boolean running = true;
+   * Остановить планировщик (graceful shutdown).
+   * Устанавливает флаг running = false, и цикл завершится на следующей итерации.
    */
   def stop(): IO[Unit] = {
-    IO.println("TODO: stop()")
+    running.set(false) >>
+      IO.println("⏹️ Планировщик остановлен")
   }
 }
 
 object SummaryScheduler {
-  /**
-   * Factory method.
-   */
   def create(
     summaryService: SummaryService,
     telegramClient: TelegramClient,
+    repo: MessageRepository[IO],
     config: Config
   ): SummaryScheduler =
-    new SummaryScheduler(summaryService, telegramClient, config)
+    new SummaryScheduler(summaryService, telegramClient, repo, config)
 }

@@ -11,6 +11,10 @@ lazy val root = (project in file("."))
       "io.github.kirill5k"    %% "mongo4cats-circe"  % "0.7.2",
       "io.circe"              %% "circe-generic"     % "0.14.6",
 
+      //dto mapping
+      "io.scalaland" %% "chimney" % "1.5.0",
+
+
       // Core
       "org.typelevel" %% "cats-effect" % "3.5.4",
 

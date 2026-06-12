@@ -1,85 +1,133 @@
 package config
 
-/**
- * TODO: Реализовать загрузку конфигурации.
- *
- * Подсказка для Java-разработчика:
- * В Spring Boot ты бы использовал @ConfigurationProperties:
- *   @ConfigurationProperties(prefix = "bot")
- *   public record BotConfig(String token, long targetChatId) {}
- *
- * В Scala с pureconfig это работает похоже:
- * - Создаёшь case class (аналог record)
- * - pureconfig автоматически мапит application.conf на case class
- *
- * Структура application.conf:
- *   bot {
- *     token = "123:ABC"
- *     target-chat-id = 123456
- *   }
- *   summary {
- *     interval-minutes = 60
- *     lookback-minutes = 60
- *   }
- *   mongodb {
- *     uri = "mongodb://localhost:27017"
- *     database = "bot"
- *   }
- *
- * Поля в case class должны называться так же, как в конфиге
- * (kebab-case в конфиге -> camelCase в Scala).
- */
+import pureconfig.{ConfigSource, ConfigReader}
+import pureconfig.generic.auto._
+import pureconfig.error.ConfigReaderFailures
 
+/**
+ * Конфигурация Telegram-бота.
+ *
+ * @param token        токен бота от @BotFather (обязательно через env TELEGRAM_BOT_TOKEN)
+ * @param targetChatId ID чата, за которым следим (обязательно через env TARGET_CHAT_ID)
+ */
 case class BotConfig(
   token: String,
   targetChatId: Long
 )
 
+/**
+ * Конфигурация генерации саммари.
+ *
+ * @param intervalMinutes  интервал между генерацией саммари (по умолчанию 1440 = 24 часа)
+ * @param lookbackMinutes  за сколько минут назад собирать сообщения (по умолчанию 1440 = 24 часа)
+ */
 case class SummaryConfig(
   intervalMinutes: Int,
   lookbackMinutes: Int
 )
 
+/**
+ * Конфигурация MongoDB.
+ *
+ * @param uri      строка подключения (mongodb://localhost:27017 для локальной)
+ * @param database имя базы данных
+ */
 case class MongoConfig(
   uri: String,
   database: String
 )
 
+/**
+ * Конфигурация Groq API для AI-генерации саммари.
+ *
+ * Groq — это быстрый инференс для open-source LLM (Llama, Mixtral).
+ * Бесплатный тариф, ключ получить на https://console.groq.com/keys
+ *
+ * @param apiKey   API-ключ (обязательно через env GROQ_API_KEY)
+ * @param endpoint URL API (дефолт: OpenAI-совместимый эндпоинт)
+ * @param model    модель LLM (дефолт: llama-3.3-70b-versatile)
+ */
+case class GroqConfig(
+  apiKey: String,
+  endpoint: String,
+  model: String
+)
+
+/**
+ * Корневой объект конфигурации приложения.
+ *
+ * Загружается из application.conf через PureConfig.
+ * Переменные окружения переопределяют значения из файла
+ * (приоритет: env vars > application.conf > дефолты).
+ */
 case class Config(
   bot: BotConfig,
   summary: SummaryConfig,
-  mongodb: MongoConfig
-)
+  mongodb: MongoConfig,
+  groq: GroqConfig
+) {
+  // Базовый URL Telegram Bot API (не меняется)
+  val apiUrl: String = "https://api.telegram.org"
+}
 
 object Config {
+
   /**
-   * TODO: Реализовать загрузку через pureconfig + переменные окружения.
+   * Загрузить конфигурацию из application.conf с переопределением через env vars.
    *
-   * Подсказка для Java-разработчика:
-   * В Spring Boot @Value("${ENV:default}") или System.getenv().
+   * Порядок приоритетов:
+   * 1. Переменные окружения (TELEGRAM_BOT_TOKEN, TARGET_CHAT_ID, GROQ_API_KEY и т.д.)
+   * 2. Значения из application.conf
    *
-   * В Scala:
-   *   sys.env.get("TELEGRAM_BOT_TOKEN") // Option[String], как Optional
+   * После загрузки — валидация обязательных полей.
    *
-   * Чтобы загрузить pureconfig:
-   *   import pureconfig._
-   *   import pureconfig.generic.auto._
-   *   ConfigSource.default.load[Config]
-   *
-   * Вернёт Either[ConfigReaderFailures, Config] — это как Result/ Either в других языках.
-   * Left = ошибка, Right = успех.
+   * @return Right(Config) при успехе, Left(ошибка) при проблемах
    */
   def load(): Either[String, Config] = {
-    // TODO:
-    // 1. Загрузить из pureconfig
-    // 2. Переопределить переменными окружения (sys.env)
-    // 3. Валидировать (token не пустой, chatId > 0)
-    Left("TODO: Реализовать загрузку конфига")
+    // Загружаем базовый конфиг из application.conf через PureConfig
+    val baseConfig = ConfigSource.default.load[Config]
+
+    // Переопределяем значения из env vars (если заданы)
+    val withEnvOverrides = baseConfig match {
+      case Right(config) =>
+        // sys.env.getOrElse — если переменной нет, берём значение из конфига
+        val botToken = sys.env.getOrElse("TELEGRAM_BOT_TOKEN", config.bot.token)
+        val targetChatId = sys.env.get("TARGET_CHAT_ID").flatMap(_.toLongOption).getOrElse(config.bot.targetChatId)
+        val groqApiKey = sys.env.getOrElse("GROQ_API_KEY", config.groq.apiKey)
+        val groqEndpoint = sys.env.getOrElse("GROQ_API_ENDPOINT", config.groq.endpoint)
+        val groqModel = sys.env.getOrElse("GROQ_MODEL", config.groq.model)
+
+        val bot = config.bot.copy(token = botToken, targetChatId = targetChatId)
+        val groq = config.groq.copy(apiKey = groqApiKey, endpoint = groqEndpoint, model = groqModel)
+        Right(config.copy(bot = bot, groq = groq))
+
+      case Left(failures) =>
+        Left(failures)
+    }
+
+    // Валидация: проверяем, что обязательные поля заполнены
+    withEnvOverrides match {
+      case Right(config) =>
+        // Валидация
+        if (config.bot.token.isEmpty) {
+          Left("TELEGRAM_BOT_TOKEN не задан (ни в конфиге, ни в переменных окружения)")
+        } else if (config.bot.targetChatId <= 0) {
+          Left("TARGET_CHAT_ID должен быть положительным числом")
+        } else if (config.groq.apiKey.isEmpty) {
+          Left("GROQ_API_KEY не задан (ни в конфиге, ни в переменных окружения)")
+        } else {
+          Right(config)
+        }
+
+      case Left(failures: ConfigReaderFailures) =>
+        Left(s"Ошибка загрузки конфига: ${failures.toList.mkString(", ")}")
+    }
   }
 
   /**
-   * Удобные accessor'ы — как getter'ы в Java record.
-   * В Scala можно добавлять методы через implicit class (расширения).
+   * Extension-методы для удобного доступа к полям конфига.
+   *
+   * Позволяет писать config.botToken вместо config.bot.token
    */
   implicit class ConfigOps(c: Config) {
     def botToken: String = c.bot.token
@@ -88,5 +136,8 @@ object Config {
     def lookbackMinutes: Int = c.summary.lookbackMinutes
     def mongodbUri: String = c.mongodb.uri
     def mongodbDatabase: String = c.mongodb.database
+    def groqApiKey: String = c.groq.apiKey
+    def groqEndpoint: String = c.groq.endpoint
+    def groqModel: String = c.groq.model
   }
 }

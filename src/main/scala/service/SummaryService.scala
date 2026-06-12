@@ -1,110 +1,144 @@
 package service
 
 import cats.effect.IO
+import cats.syntax.all._
+import clients.GroqClient
 import config.Config
-import dto.{Message, Summary}
+import dto.Summary
+import model.Message
 import repository.MessageRepository
 
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
 /**
- * TODO: Реализовать сервис генерации саммари.
+ * Сервис генерации саммари обсуждений.
  *
- * Подсказка для Java-разработчика:
- * Это как @Service в Spring Boot.
- * Зависимости через конструктор — val repo (public final в Java).
- *
- * В Scala val в конструкторе = public final поле:
- *   class SummaryService(val repo: MessageRepository, config: Config)
-   *
- * Эквивалент в Java:
- *   public class SummaryService {
- *     public final MessageRepository repo;
- *     private final Config config;
- *     public SummaryService(MessageRepository repo, Config config) {
- *       this.repo = repo;
- *       this.config = config;
- *     }
- *   }
+ * Получает сообщения за период из MongoDB, форматирует их и отправляет
+ * в Groq API для генерации AI-саммари.
  */
-class SummaryService(val repo: MessageRepository, config: Config) {
+class SummaryService(
+  val repo: MessageRepository[IO],
+  groqClient: GroqClient,
+  config: Config
+) {
+
+  // Форматтер для отображения дат в саммари (человеко-читаемый вид)
+  private val formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
+    .withZone(ZoneId.systemDefault())
 
   /**
-   * TODO: Сгенерировать саммари за последние N минут.
+   * Сгенерировать саммари за последние N минут (из конфига).
    *
-   * Алгоритм:
-   * 1. Получить текущее время в секундах: System.currentTimeMillis() / 1000
-   * 2. Вычислить periodStart = now - config.lookbackMinutes * 60
-   * 3. Вызвать generateSummaryForPeriod(start, end)
-   *
-   * В Scala System.currentTimeMillis() — тот же метод, что и в Java.
+   * Вычисляет период автоматически: [сейчас - lookbackMinutes, сейчас].
+   * Основной метод, вызываемый планировщиком.
    */
   def generateSummary(): IO[Summary] = {
-    // TODO: Вычислить период и вызвать generateSummaryForPeriod
-    IO.println("TODO: generateSummary()") >> IO.pure(
-      Summary.emptySummary(0, 0)
-    )
+    val now = System.currentTimeMillis() / 1000
+    val periodStart = now - config.lookbackMinutes * 60
+    generateSummaryForPeriod(periodStart, now)
   }
 
   /**
-   * TODO: Сгенерировать саммари за конкретный период.
+   * Сгенерировать саммари за конкретный период.
    *
-   * Алгоритм:
-   * 1. Получить сообщения из репозитория: repo.getBetween(start, end)
-   * 2. Отфильтровать пустые
-   * 3. Если нет сообщений — вернуть emptySummary
-   * 4. Иначе — вызвать generateSimpleSummary
-   *
-   * for-comprehension в Scala:
-   *   for {
-   *     messages <- repo.getBetween(start, end)
-   *     valid = messages.filterNot(_.isEmpty)
-   *     summary <- if (valid.isEmpty) IO.pure(Summary.emptySummary(start, end))
-   *                else IO.pure(generateSimpleSummary(valid, start, end))
-   *   } yield summary
-   *
-   * Это как flatMap в Stream/Mono:
-   *   repo.getBetween(start, end)
-   *     .flatMap(messages -> { ... })
+   * Логика:
+   * 1. Получить сообщения из MongoDB за период
+   * 2. Отфильтровать пустые сообщения
+   * 3. Если есть сообщения — отправить в Groq AI
+   * 4. Если пусто — вернуть пустое саммари
    */
   def generateSummaryForPeriod(start: Long, end: Long): IO[Summary] = {
-    // TODO: Реализовать
-    IO.println(s"TODO: generateSummaryForPeriod($start, $end)") >> IO.pure(
-      Summary.emptySummary(start, end)
-    )
+    for {
+      messages <- repo.findBetween(start, end)
+      valid = messages.filter(_.text.trim.nonEmpty)
+      summary <- if (valid.isEmpty) {
+        IO.pure(Summary.emptySummary(start, end))
+      } else {
+        generateAiSummary(valid, start, end)
+      }
+    } yield summary
   }
 
   /**
-   * TODO: Сгенерировать простое саммари (статистика без AI).
+   * Сгенерировать AI-саммари через Groq API.
    *
-   * Делегирует в Summary.fromMessages — фабричный метод в companion object.
+   * Поток:
+   * 1. Форматировать сообщения в читаемый текст
+   * 2. Отправить в Groq LLM
+   * 3. Собрать итоговый текст: статистика + топ участников + AI-текст
+   * 4. Если Groq недоступен — fallback на простую статистику
    */
-  def generateSimpleSummary(messages: List[Message], start: Long, end: Long): Summary = {
-    // TODO: Вызвать Summary.fromMessages(messages, start, end)
-    Summary.emptySummary(start, end)
+  private def generateAiSummary(messages: List[Message], start: Long, end: Long): IO[Summary] = {
+    // Форматируем все сообщения в один текст для отправки в AI
+    val messagesText = formatMessages(messages)
+
+    // Отправляем в Groq и собираем результат
+    groqClient.generateSummary(messagesText).map { aiText =>
+      // Собираем статистику по авторам: кто сколько написал
+      val byAuthor = messages.groupBy(_.author).view.mapValues(_.size).toMap
+      val sortedAuthors = byAuthor.toList.sortBy(-_._2) // Сортируем по убыванию
+      val startStr = formatter.format(Instant.ofEpochSecond(start))
+      val endStr = formatter.format(Instant.ofEpochSecond(end))
+
+      // Заголовок саммари с общей статистикой
+      val header = s"📊 *Саммари чата*\n\nПериод: $startStr — $endStr\nВсего сообщений: ${messages.size}\nУчастников: ${byAuthor.size}\n\n"
+
+      // Топ-3 самых активных участника с медалями
+      val topSection = if (sortedAuthors.nonEmpty) {
+        val top3 = sortedAuthors.take(3).zipWithIndex.map { case ((author, count), idx) =>
+          val medal = idx match {
+            case 0 => "🥇"
+            case 1 => "🥈"
+            case 2 => "🥉"
+            case _ => "•"
+          }
+          s"$medal ${Summary.escapeMarkdown(author)}: $count"
+        }
+        "*Топ участников:*\n" + top3.mkString("\n") + "\n\n"
+      } else ""
+
+      // Итоговый текст: заголовок + топ + AI-саммари
+      val fullText = header + topSection + aiText
+
+      Summary(
+        periodStart = start,
+        periodEnd = end,
+        totalMessages = messages.size,
+        uniqueAuthors = byAuthor.size,
+        messagesByAuthor = byAuthor,
+        topAuthors = sortedAuthors.take(3),
+        text = fullText
+      )
+    }.handleErrorWith { err =>
+      // Fallback: если Groq API недоступен (ошибка сети, лимиты и т.д.) —
+      // возвращаем простое саммари на основе статистики (без AI).
+      // Приложение продолжает работать даже без доступа к AI.
+      IO.println(s"⚠️ Groq API ошибка: ${err.getMessage}. Используется fallback саммари.") >>
+        IO.pure(Summary.fromMessages(messages, start, end))
+    }
   }
 
   /**
-   * TODO (бонус): Саммари с использованием AI API.
-   *
-   * Варианты:
-   * 1. Ollama (локально): POST http://localhost:11434/api/generate
-   * 2. Google Gemini: POST https://generativelanguage.googleapis.com/...  
-   * 3. Groq: POST https://api.groq.com/openai/v1/chat/completions
-   *
-   * В Java ты бы использовал RestTemplate или WebClient.
-   * В Scala можно использовать тот же HttpClient, что и в TelegramClient.
+   * Форматировать сообщения для отправки в AI.
    */
-  def generateAISummary(messages: List[Message]): IO[Summary] = {
-    // TODO: Подключить AI API
-    IO.println("TODO: generateAISummary()") >> IO.pure(
-      Summary.emptySummary(0, 0)
-    )
+  private def formatMessages(messages: List[Message]): String = {
+    messages.map { msg =>
+      val time = formatter.format(Instant.ofEpochSecond(msg.date))
+      s"[$time] ${msg.author}: ${msg.text}"
+    }.mkString("\n")
+  }
+
+  /**
+   * Проверить, есть ли сообщения за период.
+   */
+  def hasMessagesInPeriod(start: Long, end: Long): IO[Boolean] = {
+    repo.countInPeriod(start, end).map(_ > 0)
   }
 }
 
 object SummaryService {
-  /**
-   * Factory method — аналог @Bean factory в Spring.
-   */
-  def create(repo: MessageRepository, config: Config): SummaryService =
-    new SummaryService(repo, config)
+  def create(repo: MessageRepository[IO], groqClient: GroqClient, config: Config): SummaryService =
+    new SummaryService(repo, groqClient, config)
 }

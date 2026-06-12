@@ -1,14 +1,11 @@
 package dto
 
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
 /**
  * Модель сгенерированного саммари.
- *
- * В Scala case class автоматически даёт:
- * - конструктор (как @Data в Lombok)
- * - equals/hashCode
- * - toString
- * - copy()
- * - apply() / unapply() в companion object
  */
 case class Summary(
   periodStart: Long,
@@ -21,41 +18,93 @@ case class Summary(
 )
 
 object Summary {
+
+  private val formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
+    .withZone(ZoneId.systemDefault())
+
   /**
-   * TODO: Создать Summary из списка сообщений.
-   *
-   * Подсказка для Java-разработчика:
-   * В Java ты бы использовал Stream API:
-   *   Map<String, Long> byAuthor = messages.stream()
-   *     .collect(Collectors.groupingBy(Message::getAuthor, Collectors.counting()));
-   *
-   * В Scala группировка короче:
-   *   val byAuthor = messages.groupBy(_.author).mapValues(_.size)
-   *
-   * Сортировка в Scala:
-   *   Java: list.sort(Comparator.comparingInt(...).reversed())
-   *   Scala: list.sortBy(-_._2)
-   *
-   * List[(String, Int)] — это список пар (tuple).
-   * В Java аналог — List<Map.Entry<String, Integer>> или record Pair(String, Integer).
+   * Создаёт Summary из списка сообщений.
    */
-  def fromMessages(messages: List[Message], start: Long, end: Long): Summary = {
-    // TODO:
-    // 1. Отфильтровать пустые сообщения
-    // 2. Сгруппировать по автору и посчитать
-    // 3. Найти топ-3 автора
-    // 4. Сгенерировать текст с Markdown
-    // 5. Вернуть Summary(...)
-    ???
+  def fromMessages(messages: List[model.Message], start: Long, end: Long): Summary = {
+    val validMessages = messages.filter(_.text.trim.nonEmpty)
+
+    val byAuthor = validMessages.groupBy(_.author).view.mapValues(_.size).toMap
+    val sortedAuthors = byAuthor.toList.sortBy(-_._2)
+    val top3 = sortedAuthors.take(3)
+
+    val startStr = formatter.format(Instant.ofEpochSecond(start))
+    val endStr = formatter.format(Instant.ofEpochSecond(end))
+
+    val text = buildSummaryText(startStr, endStr, validMessages.size, byAuthor, top3)
+
+    Summary(
+      periodStart = start,
+      periodEnd = end,
+      totalMessages = validMessages.size,
+      uniqueAuthors = byAuthor.size,
+      messagesByAuthor = byAuthor,
+      topAuthors = top3,
+      text = text
+    )
   }
 
   /**
-   * TODO: Создать пустое саммари, когда за период нет сообщений.
-   *
-   * Это как factory method в Java.
+   * Пустое саммари, когда за период нет сообщений.
    */
   def emptySummary(start: Long, end: Long): Summary = {
-    // TODO: Вернуть Summary с totalMessages = 0 и текстом "Нет сообщений"
-    ???
+    val startStr = formatter.format(Instant.ofEpochSecond(start))
+    val endStr = formatter.format(Instant.ofEpochSecond(end))
+
+    Summary(
+      periodStart = start,
+      periodEnd = end,
+      totalMessages = 0,
+      uniqueAuthors = 0,
+      messagesByAuthor = Map.empty,
+      topAuthors = List.empty,
+      text = s"📊 *Саммари чата*\n\nПериод: $startStr — $endStr\n\nЗа этот период сообщений не было\\."
+    )
+  }
+
+  private def buildSummaryText(
+    startStr: String,
+    endStr: String,
+    total: Int,
+    byAuthor: Map[String, Int],
+    top3: List[(String, Int)]
+  ): String = {
+    val header = s"📊 *Саммари чата*\n\nПериод: $startStr — $endStr\nВсего сообщений: $total\nУчастников: ${byAuthor.size}"
+
+    val topSection = if (top3.nonEmpty) {
+      val lines = top3.zipWithIndex.map { case ((author, count), idx) =>
+        val medal = idx match {
+          case 0 => "🥇"
+          case 1 => "🥈"
+          case 2 => "🥉"
+          case _ => "•"
+        }
+        s"$medal ${escapeMarkdown(author)}: $count"
+      }
+      "\n\n*Топ участников:*\n" + lines.mkString("\n")
+    } else ""
+
+    val detailsSection = if (byAuthor.nonEmpty) {
+      val lines = byAuthor.toList.sortBy(-_._2).map { case (author, count) =>
+        s"• ${escapeMarkdown(author)}: $count"
+      }
+      "\n\n*Все участники:*\n" + lines.mkString("\n")
+    } else ""
+
+    header + topSection + detailsSection
+  }
+
+  /**
+   * Экранирование спецсимволов MarkdownV2.
+   */
+  def escapeMarkdown(text: String): String = {
+    val charsToEscape = Set('_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!')
+    text.flatMap { c =>
+      if (charsToEscape.contains(c)) s"\\$c" else c.toString
+    }
   }
 }
