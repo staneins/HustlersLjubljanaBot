@@ -8,14 +8,14 @@ import scheduler.SummaryScheduler
 import service.SummaryService
 
 /**
- * Оркестратор приложения.
+ * Application orchestrator.
  *
- * Собирает все компоненты в правильном порядке и управляет их жизненным циклом.
- * Работает как DI-контейнер (аналог Spring ApplicationContext, но вручную).
+ * Assembles all components in the correct order and manages their lifecycle.
+ * Works as a DI container (like Spring ApplicationContext, but manual).
  *
- * Запускает два параллельных процесса:
- * 1. TelegramClient.startListening() — Long Polling для сохранения сообщений
- * 2. SummaryScheduler.start() — периодическая генерация и отправка саммари
+ * Runs two parallel processes:
+ * 1. TelegramClient.startListening() — Long Polling for saving messages
+ * 2. SummaryScheduler.start() — periodic summary generation and sending
  */
 class BotApp(
   config: Config,
@@ -26,32 +26,32 @@ class BotApp(
 ) extends LazyLogging {
 
   /**
-   * Запустить приложение.
+   * Run the application.
    *
-   * Поток:
-   * 1. Проверить токен бота через getMe()
-   * 2. Отправить приветственное сообщение
-   * 3. Запустить listener и scheduler параллельно через parTupled
+   * Flow:
+   * 1. Verify bot token via getMe()
+   * 2. Send welcome message
+   * 3. Launch listener and scheduler in parallel via parTupled
    */
   def run(): IO[Unit] = {
-    // Инициализация: проверка токена, приветствие
+    // Initialization: token check, welcome message
     val setup = for {
-      _ <- IO.println("🚀 Запуск Hustlers Ljubljana Bot...")
+      _ <- IO.println("🚀 Starting Hustlers Ljubljana Bot...")
       botInfo <- telegramClient.getMe()
-      _ <- IO.println(s"✅ Бот авторизован: @${botInfo.username}")
+      _ <- IO.println(s"✅ Bot authorized: @${botInfo.username}")
       _ <- telegramClient.sendWelcomeMessage()
-      _ <- IO.println("⚙️ Запуск параллельных процессов...")
+      _ <- IO.println("⚙️ Starting parallel processes...")
     } yield ()
 
-    // Два параллельных процесса: listener и scheduler.
-    // parTupled — запускает оба IO в отдельных файберах одновременно.
-    // Если один упадёт — handleErrorWith превратит ошибку в IO.never (висит вечно)
+    // Two parallel processes: listener and scheduler.
+    // parTupled — runs both IOs in separate fibers simultaneously.
+    // If one fails — handleErrorWith converts error to IO.never (hangs forever)
     val processes = (
       telegramClient.startListening().handleErrorWith(err =>
-        IO.println(s"❌ Ошибка в listener: ${err.getMessage}") >> IO.never
+        IO.println(s"❌ Listener error: ${err.getMessage}") >> IO.never
       ),
       scheduler.start().handleErrorWith(err =>
-        IO.println(s"❌ Ошибка в scheduler: ${err.getMessage}") >> IO.never
+        IO.println(s"❌ Scheduler error: ${err.getMessage}") >> IO.never
       )
     ).parTupled
 
@@ -61,100 +61,100 @@ class BotApp(
   /**
    * Graceful shutdown.
    *
-   * Останавливает компоненты в обратном порядке:
-   * 1. Планировщик (перестаёт генерировать новые саммари)
-   * 2. Listener (перестаёт получать сообщения из Telegram)
-   * 3. MongoDB (закрывает соединение)
+   * Stops components in reverse order:
+   * 1. Scheduler (stops generating new summaries)
+   * 2. Listener (stops receiving messages from Telegram)
+   * 3. MongoDB (closes connection)
    */
   def shutdown(): IO[Unit] = {
-    logger.info("Запуск graceful shutdown...")
+    logger.info("Starting graceful shutdown...")
     for {
-      _ <- IO.println("Остановка планировщика...")
-      _ <- scheduler.stop().handleErrorWith(err => IO.println(s"Ошибка остановки scheduler: $err"))
+      _ <- IO.println("Stopping scheduler...")
+      _ <- scheduler.stop().handleErrorWith(err => IO.println(s"Scheduler stop error: $err"))
 
-      _ <- IO.println("Остановка listener...")
-      _ <- telegramClient.stop().handleErrorWith(err => IO.println(s"Ошибка остановки client: $err"))
+      _ <- IO.println("Stopping listener...")
+      _ <- telegramClient.stop().handleErrorWith(err => IO.println(s"Client stop error: $err"))
 
-      _ <- IO.println("Закрытие соединения с MongoDB...")
-      _ <- repo.close().handleErrorWith(err => IO.println(s"Ошибка закрытия репозитория: $err"))
+      _ <- IO.println("Closing MongoDB connection...")
+      _ <- repo.close().handleErrorWith(err => IO.println(s"Repository close error: $err"))
 
-      _ <- IO.println("Бот остановлен.")
+      _ <- IO.println("Bot stopped.")
     } yield ()
   }
 }
 
 /**
- * Companion object — фабричный метод для сборки и запуска приложения.
+ * Companion object — factory method for assembling and running the application.
  *
- * Использует cats.effect.Resource для управления жизненным циклом:
- * - Resource.make(acquire)(release) — создаёт ресурс и гарантирует cleanup
- * - Resource.use — запускает приложение и при завершении вызывает release
+ * Uses cats.effect.Resource for lifecycle management:
+ * - Resource.make(acquire)(release) — creates resource and guarantees cleanup
+ * - Resource.use — runs the application and calls release on completion
  *
- * Это аналог try-with-resources в Java, но для IO-эффектов.
+ * This is analogous to try-with-resources in Java, but for IO effects.
  */
 object BotApp extends LazyLogging {
 
   /**
-   * Собрать и запустить приложение.
+   * Assemble and run the application.
    *
-   * Порядок создания компонентов важен — каждый следующий зависит от предыдущих:
-   * 1. Config (ни от чего не зависит)
-   * 2. MongoDB repo (нужен Config)
-   * 3. TelegramClient (нужен Config + repo)
-   * 4. GroqClient (нужен Config)
-   * 5. SummaryService (нужен repo + GroqClient + Config)
-   * 6. SummaryScheduler (нужен SummaryService + TelegramClient + repo + Config)
-   * 7. BotApp (нужно всё вышеперечисленное)
+   * Component creation order matters — each depends on previous ones:
+   * 1. Config (no dependencies)
+   * 2. MongoDB repo (needs Config)
+   * 3. TelegramClient (needs Config + repo)
+   * 4. GroqClient (needs Config)
+   * 5. SummaryService (needs repo + GroqClient + Config)
+   * 6. SummaryScheduler (needs SummaryService + TelegramClient + repo + Config)
+   * 7. BotApp (needs all of the above)
    */
   def runApp: IO[Unit] = {
-    // Resource гарантирует, что при завершении (успешном или аварийном)
-    // вызовется repo.close() для закрытия соединения с MongoDB
+    // Resource guarantees that repo.close() is called on completion (success or failure)
+    // to close MongoDB connection
     val appResource: Resource[IO, BotApp] = for {
-      // 1. Загрузить конфиг
+      // 1. Load config
       config <- Resource.eval(loadConfig)
-      _ <- Resource.eval(IO.println(s"Конфиг загружен. Chat ID: ${config.targetChatId}"))
+      _ <- Resource.eval(IO.println(s"Config loaded. Chat ID: ${config.targetChatId}"))
 
-      // 2. Создать репозиторий MongoDB
-      // Resource.make — создаёт repo и гарантирует вызов close() при cleanup
+      // 2. Create MongoDB repository
+      // Resource.make — creates repo and guarantees close() call on cleanup
       repo <- Resource.make(
         MessageRepositoryImpl.create(config)
       )(_.close())
 
-      // 3. Создать TelegramClient
+      // 3. Create TelegramClient
       telegramClient = new TelegramClient(config, repo)
 
-      // 4. Проверить токен
+      // 4. Verify token
       _ <- Resource.eval(
         telegramClient.getMe().flatMap(info =>
-          IO.println(s"Подключено к боту @${info.username}")
+          IO.println(s"Connected to bot @${info.username}")
         ).handleErrorWith(err =>
-          IO.println(s"Ошибка подключения к Telegram: $err") >> IO.raiseError(err)
+          IO.println(s"Telegram connection error: $err") >> IO.raiseError(err)
         )
       )
 
-      // 5. Создать GroqClient для AI-саммари
+      // 5. Create GroqClient for AI summaries
       groqClient = GroqClient.create(config)
 
-      // 6. Создать SummaryService
+      // 6. Create SummaryService
       summaryService = SummaryService.create(repo, groqClient, config)
 
-      // 7. Создать SummaryScheduler (передаём repo для очистки БД после саммари)
+      // 7. Create SummaryScheduler (pass repo for DB cleanup after summary)
       scheduler = SummaryScheduler.create(summaryService, telegramClient, repo, config)
 
-      // 8. Создать BotApp
+      // 8. Create BotApp
     } yield new BotApp(config, repo, telegramClient, summaryService, scheduler)
 
-    // use — запускает приложение. При завершении автоматически вызовется cleanup из Resource
+    // use — runs the application. On completion, cleanup from Resource is automatically called
     appResource.use { app =>
       app.run()
     }.handleErrorWith { err =>
-      logger.error("Критическая ошибка приложения", err)
-      IO.println(s"Приложение аварийно остановлено: ${err.getMessage}")
+      logger.error("Critical application error", err)
+      IO.println(s"Application crashed: ${err.getMessage}")
     }
   }
 
   /**
-   * Загрузить конфиг или упасть с понятной ошибкой.
+   * Load config or fail with a clear error.
    */
   private def loadConfig: IO[Config] = {
     Config.load() match {

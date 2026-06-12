@@ -15,55 +15,55 @@ import java.net.URI
 import scala.concurrent.duration._
 
 /**
- * Клиент Telegram Bot API.
+ * Telegram Bot API client.
  *
- * Отвечает за:
- * - Long Polling: постоянное получение новых сообщений из чата
- * - Сохранение каждого сообщения в MongoDB через репозиторий
- * - Отправку сообщений обратно в чат (саммари, приветствие и т.д.)
+ * Responsible for:
+ * - Long Polling: continuously receiving new messages from the chat
+ * - Saving each message to MongoDB via repository
+ * - Sending messages back to the chat (summaries, welcome, etc.)
  *
- * Зависимости передаются через конструктор (constructor injection).
- * Все side-effect'ы (сеть, время) обёрнуты в IO.
+ * Dependencies are passed via constructor (constructor injection).
+ * All side-effects (network, time) are wrapped in IO.
  *
- * Использует JDK HttpClient (не Akka HTTP, не sttp) для минимума зависимостей.
+ * Uses JDK HttpClient (not Akka HTTP, not sttp) for minimal dependencies.
  */
 class TelegramClient(config: Config, repo: MessageRepository[IO]) {
 
-  // JDK HttpClient — встроен в Java 11+, не требует сторонних библиотек
+  // JDK HttpClient — built into Java 11+, no third-party libraries needed
   private val httpClient: HttpClient = HttpClient.newHttpClient()
 
-  // Jackson для парсинга JSON-ответов от Telegram API.
-  // DefaultScalaModule добавляет поддержку Scala-типов (case class, Option, Seq)
+  // Jackson for parsing JSON responses from Telegram API.
+  // DefaultScalaModule adds support for Scala types (case class, Option, Seq)
   private val objectMapper: ObjectMapper = new ObjectMapper()
     .registerModule(DefaultScalaModule)
 
-  // Флаг работы listener'а. @volatile — виден из других потоков без кэширования
+  // Listener working flag. @volatile — visible from other threads without caching
   @volatile private var running: Boolean = true
 
-  // Offset для Long Polling — Telegram отдаёт только обновления с update_id >= offset.
-  // Инкрементируем после каждого батча, чтобы не получить одно и то же дважды
+  // Offset for Long Polling — Telegram returns only updates with update_id >= offset.
+  // Increment after each batch to avoid getting the same message twice
   @volatile private var offset: Int = 0
 
   /**
-   * Запустить Long Polling для получения обновлений.
+   * Start Long Polling to receive updates.
    *
-   * Long Polling работает так:
-   * 1. Отправляем GET /getUpdates?offset=X&timeout=30
-   * 2. Telegram ждёт до 30 секунд, пока появится новое сообщение
-   * 3. Получаем список Update'ов (каждый содержит message)
-   * 4. Фильтруем по targetChatId, конвертируем в доменную модель, сохраняем в MongoDB
-   * 5. Обновляем offset, чтобы не получить те же сообщения снова
-   * 6. Повторяем
+   * Long Polling works as follows:
+   * 1. Send GET /getUpdates?offset=X&timeout=30
+   * 2. Telegram waits up to 30 seconds for a new message
+   * 3. Receive list of Updates (each contains a message)
+   * 4. Filter by targetChatId, convert to domain model, save to MongoDB
+   * 5. Update offset to avoid getting the same messages again
+   * 6. Repeat
    */
   def startListening(): IO[Unit] = {
 
     /**
-     * Обработать одно обновление (Update) от Telegram.
+     * Process a single update from Telegram.
      *
-     * Логика:
-     * - Если сообщение с текстом и из нашего чата → сохраняем в MongoDB
-     * - Если сообщение из другого чата → игнорируем
-     * - Если это не сообщение (callback, команда боту и т.д.) → игнорируем
+     * Logic:
+     * - If message has text and is from our chat → save to MongoDB
+     * - If message is from another chat → ignore
+     * - If not a message (callback, bot command, etc.) → ignore
      */
     def processUpdate(update: Update): IO[Unit] = {
       update.message match {
@@ -76,16 +76,16 @@ class TelegramClient(config: Config, repo: MessageRepository[IO]) {
               IO.unit
           }
         case Some(msg) if msg.chat.id != config.targetChatId =>
-          IO.unit // Игнорируем сообщения из других чатов
+          IO.unit // Ignore messages from other chats
         case _ => IO.unit
       }
     }
 
     /**
-     * Сделать один HTTP-запрос к Telegram getUpdates.
+     * Make one HTTP request to Telegram getUpdates.
      *
-     * timeout=30 — сервер Telegram будет ждать до 30 секунд, прежде чем
-     * вернёт пустой ответ. Это снижает нагрузку на API (не спамим запросами).
+     * timeout=30 — Telegram server will wait up to 30 seconds before
+     * returning an empty response. This reduces API load (no spamming requests).
      */
     def fetchUpdates: IO[GetUpdatesResponse] = IO {
       val url = s"${config.apiUrl}/bot${config.botToken}/getUpdates?offset=$offset&timeout=30"
@@ -105,16 +105,16 @@ class TelegramClient(config: Config, repo: MessageRepository[IO]) {
     }
 
     /**
-     * Основной цикл Long Polling.
+     * Main Long Polling loop.
      *
-     * Пауза 1 секунда между запросами — чтобы не спамить Telegram API
-     * при ошибках или пустых ответах.
+     * 1 second pause between requests — to avoid spamming Telegram API
+     * on errors or empty responses.
      */
     def loop: IO[Unit] = {
       for {
         _ <- IO.sleep(1.second)
         response <- fetchUpdates.handleErrorWith { err =>
-          IO.println(s"Ошибка при получении обновлений: $err") >> IO.pure(GetUpdatesResponse(false, Nil))
+          IO.println(s"Error fetching updates: $err") >> IO.pure(GetUpdatesResponse(false, Nil))
         }
 
         _ <- if (response.ok && response.updates.nonEmpty) {
@@ -129,35 +129,34 @@ class TelegramClient(config: Config, repo: MessageRepository[IO]) {
       } yield ()
     }
 
-    IO.println("🤖 Запуск Long Polling...") >> loop
+    IO.println("🤖 Starting Long Polling...") >> loop
   }
 
   /**
-   * Отправить текстовое сообщение в чат (plain text, без форматирования).
+   * Send a text message to the chat (plain text, no formatting).
    */
   def sendMessage(text: String): IO[Unit] = sendRawMessage(text, None)
 
   /**
-   * Отправить сообщение с форматированием (по умолчанию MarkdownV2).
+   * Send a message with formatting (default: MarkdownV2).
    *
-   * MarkdownV2 требует экранирования спецсимволов (_, *, [, ], и т.д.)
-   * — см. Summary.escapeMarkdown()
+   * MarkdownV2 requires escaping special characters (_, *, [, ], etc.)
+   * — see Summary.escapeMarkdown()
    */
   def sendMessageFormatted(text: String, parseMode: String = "MarkdownV2"): IO[Unit] =
     sendRawMessage(text, Some(parseMode))
 
   /**
-   * Ответить на конкретное сообщение (reply).
-   * Используется, если нужно ответить на команду пользователя.
+   * Reply to a specific message.
+   * Used when needing to reply to a user command.
    */
   def replyToMessage(messageId: Int, text: String): IO[Unit] = sendRawMessage(text, None, Some(messageId))
 
   /**
-   * Получить информацию о боте (проверка токена).
+   * Get bot information (token verification).
    *
-   * Вызывается при старте приложения, чтобы убедиться,
-   * что токен валидный и бот вообще существует.
-   * Если токен невалидный — выбросит исключение и приложение упадёт.
+   * Called at application startup to ensure the token is valid
+   * and the bot exists. If token is invalid — throws exception and app crashes.
    */
   def getMe(): IO[BotInfo] = IO {
     val url = s"${config.apiUrl}/bot${config.botToken}/getMe"
@@ -179,41 +178,37 @@ class TelegramClient(config: Config, repo: MessageRepository[IO]) {
   }
 
   /**
-   * Остановить слушатель (graceful shutdown).
-   * Устанавливает running = false, и цикл loop завершится на следующей итерации.
+   * Stop the listener (graceful shutdown).
+   * Sets running = false, and the loop will complete on the next iteration.
    */
   def stop(): IO[Unit] = IO {
     running = false
-    println("🛑 Long polling остановлен")
+    println("🛑 Long polling stopped")
   }
 
   /**
-   * Отправить приветственное сообщение при старте бота.
-   * Пользователи в чате увидят, что бот заработал.
+   * Send a welcome message when the bot starts.
+   * Users in the chat will see that the bot is running.
    */
   def sendWelcomeMessage(): IO[Unit] = {
     val welcome =
       """
-        |🤖 *Hustlers Ljubljana Bot* запущен\!
+        |🤖 *Hustlers Ljubljana Bot* is running\!
         |
-        |Я буду следить за чатом и делать саммари обсуждений\.
-        |
-        |*Команды:*
-        |/summary — получить сводку последних сообщений
-        |/stats — статистика активности
+        |I will monitor the chat and create discussion summaries\.
         """.stripMargin
     sendMessageFormatted(welcome)
   }
 
   /**
-   * Внутренний метод для отправки сообщения через HTTP POST.
+   * Internal method for sending a message via HTTP POST.
    *
-   * Собирает JSON-тело вручную (без библиотек сериализации) —
-   * это простой запрос с 2-3 полями, поэтому Jackson здесь избыточен.
+   * Builds JSON body manually (no serialization libraries) —
+   * this is a simple request with 2-3 fields, so Jackson is redundant here.
    *
-   * @param text             текст сообщения
-   * @param parseMode        режим форматирования (None = plain text, Some("MarkdownV2") и т.д.)
-   * @param replyToMessageId если задан — ответить на конкретное сообщение
+   * @param text             message text
+   * @param parseMode        formatting mode (None = plain text, Some("MarkdownV2"), etc.)
+   * @param replyToMessageId if specified — reply to a specific message
    */
   private def sendRawMessage(text: String, parseMode: Option[String] = None, replyToMessageId: Option[Int] = None): IO[Unit] = IO {
     val url = s"${config.apiUrl}/bot${config.botToken}/sendMessage"
@@ -238,15 +233,15 @@ class TelegramClient(config: Config, repo: MessageRepository[IO]) {
     val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
 
     if (response.statusCode() != 200) {
-      throw new RuntimeException(s"Ошибка отправки сообщения: ${response.statusCode()} - ${response.body()}")
+      throw new RuntimeException(s"Error sending message: ${response.statusCode()} - ${response.body()}")
     }
   }
 
   /**
-   * Экранирование спецсимволов для JSON-строк.
+   * Escape special characters for JSON strings.
    *
-   * Необходимо, потому что мы собираем JSON вручную через string interpolation.
-   * Без экранирования символы вроде \n или " сломают JSON.
+   * Required because we build JSON manually via string interpolation.
+   * Without escaping, characters like \n or " would break the JSON.
    */
   private def escapeJson(text: String): String = {
     text
@@ -259,6 +254,6 @@ class TelegramClient(config: Config, repo: MessageRepository[IO]) {
 }
 
 /**
- * Информация о боте (ответ от getMe).
+ * Bot information (response from getMe).
  */
 case class BotInfo(id: Long, username: String)

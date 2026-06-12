@@ -10,32 +10,32 @@ import service.SummaryService
 import scala.concurrent.duration._
 
 /**
- * Планировщик периодической генерации саммари.
+ * Scheduler for periodic summary generation.
  *
- * Работает как бесконечный цикл: ждёт N минут → генерирует саммари →
- * отправляет в Telegram → чистит БД → повторяет.
+ * Works as an infinite loop: wait N minutes → generate summary →
+ * send to Telegram → clean DB → repeat.
  *
- * Ошибки в одном цикле логируются, но не останавливают планировщик.
+ * Errors in a single cycle are logged but do not stop the scheduler.
  */
 class SummaryScheduler(
-  summaryService: SummaryService,          // Сервис генерации саммари (Groq + fallback)
-  telegramClient: TelegramClient,          // Клиент Telegram для отправки сообщений
-  repo: MessageRepository[IO],             // Репозиторий MongoDB для очистки после саммари
-  config: Config                           // Конфигурация (интервал, lookback)
+  summaryService: SummaryService,          // Summary generation service (Groq + fallback)
+  telegramClient: TelegramClient,          // Telegram client for sending messages
+  repo: MessageRepository[IO],             // MongoDB repository for cleanup after summary
+  config: Config                           // Configuration (interval, lookback)
 ) {
 
-  // Флаг "работает ли планировщик". Ref — это потокобезопасная ячейка в IO.
-  // Можно менять из разных файберов без гонок.
+  // Flag "is scheduler running". Ref is a thread-safe cell in IO.
+  // Can be modified from different fibers without race conditions.
   private val running: Ref[IO, Boolean] = Ref.unsafe[IO, Boolean](true)
 
   /**
-   * Запустить бесконечный цикл планировщика.
+   * Start the infinite scheduler loop.
    *
-   * Каждая итерация:
-   * 1. Проверить, не остановлен ли планировщик
-   * 2. Выполнить runOnce() с обработкой ошибок
-   * 3. Поспать interval минут
-   * 4. Повторить
+   * Each iteration:
+   * 1. Check if scheduler is stopped
+   * 2. Execute runOnce() with error handling
+   * 3. Sleep for interval minutes
+   * 4. Repeat
    */
   def start(): IO[Unit] = {
     val interval = config.summaryIntervalMinutes.minutes
@@ -44,67 +44,67 @@ class SummaryScheduler(
       isRunning <- running.get
       _ <- if (isRunning) {
         runOnce().handleErrorWith { err =>
-          // Ошибка в одном цикле логируется, но НЕ останавливает планировщик
-          IO.println(s"❌ Ошибка в планировщике: ${err.getMessage}")
+          // Error in a single cycle is logged, but does NOT stop the scheduler
+          IO.println(s"❌ Scheduler error: ${err.getMessage}")
         } >>
-          IO.sleep(interval) >> // Ждём до следующего цикла
+          IO.sleep(interval) >> // Wait until next cycle
           loop()
       } else {
         IO.unit
       }
     } yield ()
 
-    IO.println(s"⏰ Планировщик запущен. Интервал: ${config.summaryIntervalMinutes} мин") >>
+    IO.println(s"⏰ Scheduler started. Interval: ${config.summaryIntervalMinutes} min") >>
       loop()
   }
 
   /**
-   * Один цикл: генерация саммари + отправка в чат + очистка БД.
+   * Single cycle: summary generation + send to chat + DB cleanup.
    *
-   * Поток:
-   * 1. Проверить, есть ли сообщения за период
-   * 2. Сгенерировать саммари через SummaryService (Groq API)
-   * 3. Отправить в Telegram
-   * 4. Удалить ВСЕ сообщения из MongoDB (БД чиста до следующего цикла)
+   * Flow:
+   * 1. Check if there are messages for the period
+   * 2. Generate summary via SummaryService (Groq API)
+   * 3. Send to Telegram
+   * 4. Delete ALL messages from MongoDB (DB is clean until next cycle)
    */
   def runOnce(): IO[Unit] = {
-    val now = System.currentTimeMillis() / 1000                     // Текущее время в секундах
-    val periodStart = now - config.lookbackMinutes * 60             // Начало периода (сейчас - lookback)
+    val now = System.currentTimeMillis() / 1000                     // Current time in seconds
+    val periodStart = now - config.lookbackMinutes * 60             // Start of period (now - lookback)
 
     for {
-      // Шаг 1: Проверить, есть ли сообщения за период
+      // Step 1: Check if there are messages for the period
       hasMessages <- summaryService.hasMessagesInPeriod(periodStart, now)
       _ <- if (hasMessages) {
         for {
-          // Шаг 2: Сгенерировать саммари (AI через Groq или fallback на статистику)
+          // Step 2: Generate summary (AI via Groq or fallback to statistics)
           summary <- summaryService.generateSummary()
           _ <- if (summary.totalMessages > 0) {
             for {
-              // Шаг 3: Отправить саммари в Telegram-чат
+              // Step 3: Send summary to Telegram chat
               _ <- telegramClient.sendMessageFormatted(summary.text)
-              _ <- IO.println(s"✅ Саммари отправлено: ${summary.totalMessages} сообщений")
+              _ <- IO.println(s"✅ Summary sent: ${summary.totalMessages} messages")
 
-              // Шаг 4: Очистить MongoDB — все сообщения уже обработаны
+              // Step 4: Clean MongoDB — all messages are already processed
               deleted <- repo.deleteAll()
-              _ <- IO.println(s"🗑️ MongoDB очищена: удалено $deleted сообщений")
+              _ <- IO.println(s"🗑️ MongoDB cleaned: deleted $deleted messages")
             } yield ()
           } else {
             IO.unit
           }
         } yield ()
       } else {
-        IO.println("ℹ️ За период нет сообщений, саммари не отправляется")
+        IO.println("ℹ️ No messages for the period, summary not sent")
       }
     } yield ()
   }
 
   /**
-   * Остановить планировщик (graceful shutdown).
-   * Устанавливает флаг running = false, и цикл завершится на следующей итерации.
+   * Stop the scheduler (graceful shutdown).
+   * Sets flag running = false, and the loop will complete on the next iteration.
    */
   def stop(): IO[Unit] = {
     running.set(false) >>
-      IO.println("⏹️ Планировщик остановлен")
+      IO.println("⏹️ Scheduler stopped")
   }
 }
 

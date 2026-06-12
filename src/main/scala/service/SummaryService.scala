@@ -13,10 +13,10 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
- * Сервис генерации саммари обсуждений.
+ * Summary generation service for chat discussions.
  *
- * Получает сообщения за период из MongoDB, форматирует их и отправляет
- * в Groq API для генерации AI-саммари.
+ * Retrieves messages for a period from MongoDB, formats them,
+ * and sends to Groq API for AI summary generation.
  */
 class SummaryService(
   val repo: MessageRepository[IO],
@@ -24,15 +24,15 @@ class SummaryService(
   config: Config
 ) {
 
-  // Форматтер для отображения дат в саммари (человеко-читаемый вид)
+  // Formatter for displaying dates in summary (human-readable format)
   private val formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
     .withZone(ZoneId.systemDefault())
 
   /**
-   * Сгенерировать саммари за последние N минут (из конфига).
+   * Generate summary for the last N minutes (from config).
    *
-   * Вычисляет период автоматически: [сейчас - lookbackMinutes, сейчас].
-   * Основной метод, вызываемый планировщиком.
+   * Automatically calculates period: [now - lookbackMinutes, now].
+   * Main method called by the scheduler.
    */
   def generateSummary(): IO[Summary] = {
     val now = System.currentTimeMillis() / 1000
@@ -41,13 +41,13 @@ class SummaryService(
   }
 
   /**
-   * Сгенерировать саммари за конкретный период.
+   * Generate summary for a specific period.
    *
-   * Логика:
-   * 1. Получить сообщения из MongoDB за период
-   * 2. Отфильтровать пустые сообщения
-   * 3. Если есть сообщения — отправить в Groq AI
-   * 4. Если пусто — вернуть пустое саммари
+   * Logic:
+   * 1. Get messages from MongoDB for the period
+   * 2. Filter empty messages
+   * 3. If messages exist — send to Groq AI
+   * 4. If empty — return empty summary
    */
   def generateSummaryForPeriod(start: Long, end: Long): IO[Summary] = {
     for {
@@ -62,28 +62,28 @@ class SummaryService(
   }
 
   /**
-   * Сгенерировать AI-саммари через Groq API.
+   * Generate AI summary via Groq API.
    *
-   * Поток:
-   * 1. Форматировать сообщения в читаемый текст
-   * 2. Отправить в Groq LLM
-   * 3. Собрать итоговый текст: статистика + топ участников + AI-текст
-   * 4. Если Groq недоступен — fallback на простую статистику
+   * Flow:
+   * 1. Format messages into readable text
+   * 2. Send to Groq LLM
+   * 3. Build final text: statistics + top participants + AI text
+   * 4. If Groq unavailable — fallback to simple statistics
    */
   private def generateAiSummary(messages: List[Message], start: Long, end: Long): IO[Summary] = {
-    // Форматируем все сообщения в один текст для отправки в AI
+    // Format all messages into a single text for AI
     val messagesText = formatMessages(messages)
 
-    // Отправляем в Groq и собираем результат
+    // Send to Groq and collect result
     groqClient.generateSummary(messagesText).map { aiText =>
-      // Собираем статистику по авторам: кто сколько написал
+      // Collect statistics by authors: who wrote how much
       val byAuthor = messages.groupBy(_.author).view.mapValues(_.size).toMap
-      val sortedAuthors = byAuthor.toList.sortBy(-_._2) // Сортируем по убыванию
+      val sortedAuthors = byAuthor.toList.sortBy(-_._2) // Sort descending
       val startStr = formatter.format(Instant.ofEpochSecond(start))
       val endStr = formatter.format(Instant.ofEpochSecond(end))
 
       // Заголовок саммари с общей статистикой
-      val header = s"📊 *Саммари чата*\n\nПериод: $startStr — $endStr\nВсего сообщений: ${messages.size}\nУчастников: ${byAuthor.size}\n\n"
+      val header = s"📊 *Chat Summary*\n\nPeriod: $startStr — $endStr\nTotal messages: ${messages.size}\nParticipants: ${byAuthor.size}\n\n"
 
       // Топ-3 самых активных участника с медалями
       val topSection = if (sortedAuthors.nonEmpty) {
@@ -96,7 +96,7 @@ class SummaryService(
           }
           s"$medal ${Summary.escapeMarkdown(author)}: $count"
         }
-        "*Топ участников:*\n" + top3.mkString("\n") + "\n\n"
+        "*Top Participants:*\n" + top3.mkString("\n") + "\n\n"
       } else ""
 
       // Итоговый текст: заголовок + топ + AI-саммари
@@ -112,16 +112,16 @@ class SummaryService(
         text = fullText
       )
     }.handleErrorWith { err =>
-      // Fallback: если Groq API недоступен (ошибка сети, лимиты и т.д.) —
-      // возвращаем простое саммари на основе статистики (без AI).
-      // Приложение продолжает работать даже без доступа к AI.
-      IO.println(s"⚠️ Groq API ошибка: ${err.getMessage}. Используется fallback саммари.") >>
+      // Fallback: if Groq API is unavailable (network error, rate limits, etc.) —
+      // return a simple summary based on statistics (without AI).
+      // The application continues to work even without AI access.
+      IO.println(s"⚠️ Groq API error: ${err.getMessage}. Using fallback summary.") >>
         IO.pure(Summary.fromMessages(messages, start, end))
     }
   }
 
   /**
-   * Форматировать сообщения для отправки в AI.
+   * Format messages for AI submission.
    */
   private def formatMessages(messages: List[Message]): String = {
     messages.map { msg =>
@@ -131,7 +131,7 @@ class SummaryService(
   }
 
   /**
-   * Проверить, есть ли сообщения за период.
+   * Check if there are messages for the period.
    */
   def hasMessagesInPeriod(start: Long, end: Long): IO[Boolean] = {
     repo.countInPeriod(start, end).map(_ > 0)

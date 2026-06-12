@@ -1,16 +1,16 @@
 import cats.effect.IOApp
 
 /**
- * Точка входа в приложение.
+ * Application entry point.
  *
- * IOApp.Simple — это базовый трейт Cats Effect для приложений.
- * Он управляет жизненным циклом:
- * - Создаёт вычислительный ExecutionContext (пул потоков)
- * - Обрабатывает сигналы SIGINT/SIGTERM для graceful shutdown
- * - Запускает метод run() и ждёт его завершения
+ * IOApp.Simple is a base Cats Effect trait for applications.
+ * It manages the lifecycle:
+ * - Creates execution ExecutionContext (thread pool)
+ * - Handles SIGINT/SIGTERM signals for graceful shutdown
+ * - Runs the run() method and waits for completion
  *
- * Вся реальная работа делегируется в BotApp.runApp,
- * который собирает компоненты и запускает бота.
+ * All actual work is delegated to BotApp.runApp,
+ * which assembles components and starts the bot.
  */
 object Main extends IOApp.Simple {
   def run: cats.effect.IO[Unit] = BotApp.runApp

@@ -27,8 +27,13 @@ lazy val root = (project in file("."))
 
       // Логирование
       "ch.qos.logback" % "logback-classic" % "1.4.14",
-      "com.typesafe.scala-logging" %% "scala-logging" % "3.9.5"
-    )
+      "com.typesafe.scala-logging" %% "scala-logging" % "3.9.5",
+
+      // Тестирование
+      "org.scalameta" %% "munit" % "0.7.29" % Test,
+      "org.typelevel" %% "cats-effect-testing-scalatest" % "1.4.0" % Test
+    ),
+    testFrameworks += new TestFramework("munit.Framework")
   )
 
 ThisBuild / scalacOptions ++= Seq(

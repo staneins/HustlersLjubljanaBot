@@ -49,7 +49,7 @@ object Summary {
   }
 
   /**
-   * Пустое саммари, когда за период нет сообщений.
+   * Empty summary when there are no messages for the period.
    */
   def emptySummary(start: Long, end: Long): Summary = {
     val startStr = formatter.format(Instant.ofEpochSecond(start))
@@ -62,7 +62,7 @@ object Summary {
       uniqueAuthors = 0,
       messagesByAuthor = Map.empty,
       topAuthors = List.empty,
-      text = s"📊 *Саммари чата*\n\nПериод: $startStr — $endStr\n\nЗа этот период сообщений не было\\."
+      text = s"📊 *Chat Summary*\n\nPeriod: $startStr — $endStr\n\nNo messages during this period\\."
     )
   }
 
@@ -73,7 +73,7 @@ object Summary {
     byAuthor: Map[String, Int],
     top3: List[(String, Int)]
   ): String = {
-    val header = s"📊 *Саммари чата*\n\nПериод: $startStr — $endStr\nВсего сообщений: $total\nУчастников: ${byAuthor.size}"
+    val header = s"📊 *Chat Summary*\n\nPeriod: $startStr — $endStr\nTotal messages: $total\nParticipants: ${byAuthor.size}"
 
     val topSection = if (top3.nonEmpty) {
       val lines = top3.zipWithIndex.map { case ((author, count), idx) =>
@@ -85,14 +85,14 @@ object Summary {
         }
         s"$medal ${escapeMarkdown(author)}: $count"
       }
-      "\n\n*Топ участников:*\n" + lines.mkString("\n")
+      "\n\n*Top Participants:*\n" + lines.mkString("\n")
     } else ""
 
     val detailsSection = if (byAuthor.nonEmpty) {
       val lines = byAuthor.toList.sortBy(-_._2).map { case (author, count) =>
         s"• ${escapeMarkdown(author)}: $count"
       }
-      "\n\n*Все участники:*\n" + lines.mkString("\n")
+      "\n\n*All Participants:*\n" + lines.mkString("\n")
     } else ""
 
     header + topSection + detailsSection

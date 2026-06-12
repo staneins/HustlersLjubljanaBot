@@ -1,26 +1,29 @@
 package dto
 
-import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.{JsonProperty, JsonIgnoreProperties}
 
 /**
- * Ответ от Telegram API для метода /getUpdates.
+ * Response from Telegram API for /getUpdates method.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 case class GetUpdatesResponse(
   @JsonProperty("ok") ok: Boolean,
   @JsonProperty("result") updates: List[Update]
 )
 
 /**
- * Отдельное обновление от Telegram.
+ * Single update from Telegram.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 case class Update(
   @JsonProperty("update_id") updateId: Int,
   @JsonProperty("message") message: Option[TelegramMessage]
 )
 
 /**
- * Сообщение в формате Telegram API (вложенный объект внутри Update).
+ * Message in Telegram API format (nested object inside Update).
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 case class TelegramMessage(
   @JsonProperty("message_id") messageId: Int,
   @JsonProperty("from") from: Option[From],
@@ -31,18 +34,22 @@ case class TelegramMessage(
 )
 
 /**
- * Информация об отправителе.
+ * Information about the sender.
+ * @param isPremium — Telegram Premium flag (may be absent for old accounts)
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 case class From(
   @JsonProperty("id") id: Long,
   @JsonProperty("first_name") firstName: String,
   @JsonProperty("username") username: Option[String] = None,
-  @JsonProperty("is_bot") isBot: Boolean = false
+  @JsonProperty("is_bot") isBot: Boolean = false,
+  @JsonProperty("is_premium") isPremium: Option[Boolean] = None
 )
 
 /**
- * Информация о чате.
+ * Information about the chat.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 case class Chat(
   @JsonProperty("id") id: Long,
   @JsonProperty("type") `type`: String,

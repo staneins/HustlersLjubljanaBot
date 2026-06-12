@@ -1,15 +1,15 @@
 package model
 
 /**
- * Доменная модель сообщения для хранения в MongoDB.
+ * Domain model for messages stored in MongoDB.
  *
- * Это основная сущность приложения — каждое сообщение из чата
- * сохраняется в таком виде. Содержит только нужные поля:
- * - messageId для дедупликации (уникальный индекс в MongoDB)
- * - author — имя отправителя (username или firstName)
- * - text — текст сообщения
- * - date — Unix-таймстемп (секунды), используется для фильтрации по периоду
- * - chatId — ID чата (на случай если бот будет в нескольких чатах)
+ * This is the main application entity — each chat message
+ * is stored in this format. Contains only necessary fields:
+ * - messageId for deduplication (unique index in MongoDB)
+ * - author — sender name (username or firstName)
+ * - text — message text
+ * - date — Unix timestamp (seconds), used for period filtering
+ * - chatId — chat ID (in case bot runs in multiple chats)
  */
 case class Message(
   messageId: Int,
@@ -21,16 +21,16 @@ case class Message(
 
 object Message {
   /**
-   * Конвертация из Telegram DTO в доменную модель.
+   * Convert from Telegram DTO to domain model.
    *
-   * Возвращает Option[Message], потому что:
-   * - Сообщение может быть без текста (фото, стикер и т.д.)
-   * - Мы сохраняем только текстовые сообщения
+   * Returns Option[Message] because:
+   * - Message may have no text (photo, sticker, etc.)
+   * - We only save text messages
    *
-   * Автор определяется так:
-   * 1. Если есть username — берём его
-   * 2. Иначе — firstName
-   * 3. Если вообще ничего нет — "Unknown"
+   * Author is determined as:
+   * 1. If username exists — use it
+   * 2. Otherwise — firstName
+   * 3. If nothing at all — "Unknown"
    */
   def fromTelegramMessage(msg: dto.TelegramMessage): Option[Message] = {
     msg.text.map { text =>
@@ -42,7 +42,7 @@ object Message {
         messageId = msg.messageId,
         author = author,
         text = text,
-        date = msg.timestamp,   // Unix-таймстемп в секундах (от Telegram)
+        date = msg.timestamp,   // Unix timestamp in seconds (from Telegram)
         chatId = msg.chat.id
       )
     }

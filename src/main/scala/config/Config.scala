@@ -5,10 +5,10 @@ import pureconfig.generic.auto._
 import pureconfig.error.ConfigReaderFailures
 
 /**
- * Конфигурация Telegram-бота.
+ * Telegram bot configuration.
  *
- * @param token        токен бота от @BotFather (обязательно через env TELEGRAM_BOT_TOKEN)
- * @param targetChatId ID чата, за которым следим (обязательно через env TARGET_CHAT_ID)
+ * @param token        bot token from @BotFather (required via env TELEGRAM_BOT_TOKEN)
+ * @param targetChatId chat ID to monitor (required via env TARGET_CHAT_ID)
  */
 case class BotConfig(
   token: String,
@@ -16,10 +16,10 @@ case class BotConfig(
 )
 
 /**
- * Конфигурация генерации саммари.
+ * Summary generation configuration.
  *
- * @param intervalMinutes  интервал между генерацией саммари (по умолчанию 1440 = 24 часа)
- * @param lookbackMinutes  за сколько минут назад собирать сообщения (по умолчанию 1440 = 24 часа)
+ * @param intervalMinutes  interval between summary generation (default 1440 = 24 hours)
+ * @param lookbackMinutes  how many minutes back to collect messages (default 1440 = 24 hours)
  */
 case class SummaryConfig(
   intervalMinutes: Int,
@@ -27,10 +27,10 @@ case class SummaryConfig(
 )
 
 /**
- * Конфигурация MongoDB.
+ * MongoDB configuration.
  *
- * @param uri      строка подключения (mongodb://localhost:27017 для локальной)
- * @param database имя базы данных
+ * @param uri      connection string (mongodb://localhost:27017 for local)
+ * @param database database name
  */
 case class MongoConfig(
   uri: String,
@@ -38,14 +38,14 @@ case class MongoConfig(
 )
 
 /**
- * Конфигурация Groq API для AI-генерации саммари.
+ * Groq API configuration for AI summary generation.
  *
- * Groq — это быстрый инференс для open-source LLM (Llama, Mixtral).
- * Бесплатный тариф, ключ получить на https://console.groq.com/keys
+ * Groq is a fast inference provider for open-source LLMs (Llama, Mixtral).
+ * Free tier, get key at https://console.groq.com/keys
  *
- * @param apiKey   API-ключ (обязательно через env GROQ_API_KEY)
- * @param endpoint URL API (дефолт: OpenAI-совместимый эндпоинт)
- * @param model    модель LLM (дефолт: llama-3.3-70b-versatile)
+ * @param apiKey   API key (required via env GROQ_API_KEY)
+ * @param endpoint API URL (default: OpenAI-compatible endpoint)
+ * @param model    LLM model (default: llama-3.3-70b-versatile)
  */
 case class GroqConfig(
   apiKey: String,
@@ -54,11 +54,11 @@ case class GroqConfig(
 )
 
 /**
- * Корневой объект конфигурации приложения.
+ * Root application configuration object.
  *
- * Загружается из application.conf через PureConfig.
- * Переменные окружения переопределяют значения из файла
- * (приоритет: env vars > application.conf > дефолты).
+ * Loaded from application.conf via PureConfig.
+ * Environment variables override file values
+ * (priority: env vars > application.conf > defaults).
  */
 case class Config(
   bot: BotConfig,
@@ -66,31 +66,31 @@ case class Config(
   mongodb: MongoConfig,
   groq: GroqConfig
 ) {
-  // Базовый URL Telegram Bot API (не меняется)
+  // Base Telegram Bot API URL (does not change)
   val apiUrl: String = "https://api.telegram.org"
 }
 
 object Config {
 
   /**
-   * Загрузить конфигурацию из application.conf с переопределением через env vars.
+   * Load configuration from application.conf with env var overrides.
    *
-   * Порядок приоритетов:
-   * 1. Переменные окружения (TELEGRAM_BOT_TOKEN, TARGET_CHAT_ID, GROQ_API_KEY и т.д.)
-   * 2. Значения из application.conf
+   * Priority order:
+   * 1. Environment variables (TELEGRAM_BOT_TOKEN, TARGET_CHAT_ID, GROQ_API_KEY, etc.)
+   * 2. Values from application.conf
    *
-   * После загрузки — валидация обязательных полей.
+   * After loading — validates required fields.
    *
-   * @return Right(Config) при успехе, Left(ошибка) при проблемах
+   * @return Right(Config) on success, Left(error) on failure
    */
   def load(): Either[String, Config] = {
-    // Загружаем базовый конфиг из application.conf через PureConfig
+    // Load base config from application.conf via PureConfig
     val baseConfig = ConfigSource.default.load[Config]
 
-    // Переопределяем значения из env vars (если заданы)
+    // Override values from env vars (if specified)
     val withEnvOverrides = baseConfig match {
       case Right(config) =>
-        // sys.env.getOrElse — если переменной нет, берём значение из конфига
+        // sys.env.getOrElse — if variable doesn't exist, use value from config
         val botToken = sys.env.getOrElse("TELEGRAM_BOT_TOKEN", config.bot.token)
         val targetChatId = sys.env.get("TARGET_CHAT_ID").flatMap(_.toLongOption).getOrElse(config.bot.targetChatId)
         val groqApiKey = sys.env.getOrElse("GROQ_API_KEY", config.groq.apiKey)
@@ -105,29 +105,27 @@ object Config {
         Left(failures)
     }
 
-    // Валидация: проверяем, что обязательные поля заполнены
+    // Validation: check that required fields are populated
     withEnvOverrides match {
       case Right(config) =>
-        // Валидация
+        // Validation
         if (config.bot.token.isEmpty) {
-          Left("TELEGRAM_BOT_TOKEN не задан (ни в конфиге, ни в переменных окружения)")
-        } else if (config.bot.targetChatId <= 0) {
-          Left("TARGET_CHAT_ID должен быть положительным числом")
+          Left("TELEGRAM_BOT_TOKEN not set (neither in config nor in environment variables)")
         } else if (config.groq.apiKey.isEmpty) {
-          Left("GROQ_API_KEY не задан (ни в конфиге, ни в переменных окружения)")
+          Left("GROQ_API_KEY not set (neither in config nor in environment variables)")
         } else {
           Right(config)
         }
 
       case Left(failures: ConfigReaderFailures) =>
-        Left(s"Ошибка загрузки конфига: ${failures.toList.mkString(", ")}")
+        Left(s"Config loading error: ${failures.toList.mkString(", ")}")
     }
   }
 
   /**
-   * Extension-методы для удобного доступа к полям конфига.
+   * Extension methods for convenient access to config fields.
    *
-   * Позволяет писать config.botToken вместо config.bot.token
+   * Allows writing config.botToken instead of config.bot.token
    */
   implicit class ConfigOps(c: Config) {
     def botToken: String = c.bot.token

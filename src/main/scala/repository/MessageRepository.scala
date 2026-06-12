@@ -3,29 +3,29 @@ package repository
 import model.Message
 
 /**
- * Треит репозитория сообщений.
+ * Message repository trait.
  *
- * Определяет контракт CRUD-операций над сообщениями в MongoDB.
- * Параметризован эффект-типом F[_] (обычно IO), чтобы можно было
- * подменять реализацию для тестирования.
+ * Defines CRUD operations contract for messages in MongoDB.
+ * Parameterized by effect type F[_] (usually IO) to allow
+ * swapping implementation for testing.
  */
 trait MessageRepository[F[_]] {
 
-  /** Сохранить одно сообщение в БД */
+  /** Save a single message to DB */
   def create(message: Message): F[Message]
 
-  /** Получить все сообщения из БД */
+  /** Get all messages from DB */
   def findAll: F[List[Message]]
 
-  /** Получить сообщения за период (по Unix-таймстемпу в секундах) */
+  /** Get messages for a period (by Unix timestamp in seconds) */
   def findBetween(start: Long, end: Long): F[List[Message]]
 
-  /** Подсчитать количество сообщений за период */
+  /** Count messages for a period */
   def countInPeriod(start: Long, end: Long): F[Long]
 
-  /** Удалить ВСЕ сообщения из коллекции (вызывается после успешной отправки саммари) */
+  /** Delete ALL messages from collection (called after successful summary send) */
   def deleteAll(): F[Long]
 
-  /** Закрыть соединение с MongoDB */
+  /** Close MongoDB connection */
   def close(): F[Unit]
 }

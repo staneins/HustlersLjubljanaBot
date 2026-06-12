@@ -30,39 +30,40 @@ class GroqClient(config: Config) {
     .registerModule(DefaultScalaModule)
 
   /**
-   * Сгенерировать саммари из списка сообщений чата с помощью Groq LLM.
+   * Generate summary from chat messages using Groq LLM.
    *
-   * Отправляет два сообщения в чат:
-   * 1. System prompt — инструкции для LLM (как форматировать ответ)
-   * 2. User prompt — сами сообщения чата для анализа
+   * Sends two messages to the chat:
+   * 1. System prompt — instructions for LLM (how to format response)
+   * 2. User prompt — chat messages for analysis
    *
-   * Ответ парсится из JSON: choices[0].message.content
+   * Response is parsed from JSON: choices[0].message.content
    *
-   * @param messagesText отформатированный текст сообщений (автор + текст)
-   * @return текст саммари от AI
+   * @param messagesText formatted text of messages (author + text)
+   * @return summary text from AI
    */
   def generateSummary(messagesText: String): IO[String] = IO.blocking {
-    // System prompt — задаёт роль и формат ответа для LLM
+    // System prompt — sets role and response format for LLM
     val systemPrompt =
-      """Ты — ассистент, который делает краткие и полезные саммари обсуждений в Telegram-чате.
-        |Отвечай на русском языке.
-        |Формат ответа:
-        |- Краткое описание основных тем обсуждений
-        |- Ключевые моменты и решения
-        |- Активные участники и их вклад
-        |Используй Markdown для форматирования. Будь лаконичен, но информативен.""".stripMargin
+      """You are an assistant that creates concise and useful summaries of Telegram chat discussions.
+        |Respond in English.
+        |Response format:
+        |- Brief description of main discussion topics
+        |- Key points and decisions
+        |- Active participants and their contributions
+        |Use Markdown for formatting. Be concise but informative. You are Balkan and you love Balkans. Don't hesitate
+        |to use some words or phrases in Balkan (ex-Yugoslavia) languages.""".stripMargin
 
-    // User prompt — сами сообщения для анализа
+    // User prompt — messages for analysis
     val lookbackMinutes = config.summary.lookbackMinutes
     val timeDescription = if (lookbackMinutes >= 1440) {
-      s"${lookbackMinutes / 1440} дн."
+      s"${lookbackMinutes / 1440} day(s)"
     } else if (lookbackMinutes >= 60) {
-      s"${lookbackMinutes / 60} ч."
+      s"${lookbackMinutes / 60} hour(s)"
     } else {
-      s"$lookbackMinutes мин."
+      s"$lookbackMinutes minute(s)"
     }
     val userPrompt =
-      s"""Сделай саммари по сообщениям ниже, напиши так: "За прошедшее $timeDescription пользователь N говорил о том-то", список сообщений для саммари ниже:\n\n$messagesText"""
+      s"""Create a summary of the messages below, write it like: "In the past $timeDescription user N talked about X", list of messages for summary below:\n\n$messagesText"""
 
     // Формируем тело запроса в формате OpenAI Chat Completions API
     val requestBody = Map(
